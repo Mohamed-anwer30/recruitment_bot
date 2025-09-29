@@ -1,6 +1,6 @@
 import logging
-import os # Import necessary for reading Environment Variables
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+import os 
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
 )
@@ -12,7 +12,8 @@ from datetime import datetime
 # Fetch values from Render's Environment Variables (for security and easy deployment)
 BOT_TOKEN = os.environ.get("BOT_TOKEN") 
 SHEET_NAME = os.environ.get("SHEET_NAME") 
-SHEET_CREDENTIALS = 'google_credentials.json' 
+# يجب تعديل المسار هنا ليطابق مسار الملف السري الذي تم وضعه في Render Secret Files
+SHEET_CREDENTIALS = '/etc/secrets/google_credentials.json' 
 
 # 2. Setup Logging
 logging.basicConfig(
@@ -28,11 +29,11 @@ GET_NAME, GET_GRADUATION, GET_LANGUAGE, GET_PHONE, CONFIRM_PHONE = range(5)
 def save_to_sheet(data: Dict[str, Any]) -> bool:
     """Saves candidate data to a Google Sheet using gspread."""
     try:
-        # Check if SHEET_NAME is available (will be available when run on Render)
         if not SHEET_NAME:
             logging.error("SHEET_NAME environment variable is not set.")
             return False
             
+        # الاتصال الآن سيستخدم الملف السري من المسار الآمن
         gc = gspread.service_account(filename=SHEET_CREDENTIALS)
         spreadsheet = gc.open(SHEET_NAME)
         worksheet = spreadsheet.sheet1 
@@ -53,11 +54,9 @@ def save_to_sheet(data: Dict[str, Any]) -> bool:
         logging.error(f"Error saving data to Google Sheet: {e}")
         return False
 
-# --- Conversation Handler Functions (Same as before) ---
+# --- Conversation Handler Functions (بدون تغيير) ---
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Starts the application process with a professional introduction."""
-    
     intro_message = (
         "👋 Welcome to the **Rapid-Hire Bot**! We specialize in connecting top talent with leading Multinational BPO Companies.\n\n"
         "We are actively recruiting for various Call Center & Customer Service roles across all languages.\n\n"
@@ -65,30 +64,24 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         "This quick process will help us assess your profile for job matching.\n\n"
         "To start, please enter your **Full Name**:"
     )
-    
     await update.message.reply_text(intro_message, parse_mode='Markdown')
     context.user_data['application_data'] = {}
     return GET_NAME 
 
 async def get_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Saves the name and asks for the graduation year."""
     user_name = update.message.text
     context.user_data['application_data']['name'] = user_name
-    
     await update.message.reply_text(
         f"Thank you, {user_name}.\n\nWhat is your **Graduation Year**? (e.g., 2024)"
     )
     return GET_GRADUATION
 
 async def get_graduation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Saves graduation year and asks for the target language."""
     grad_year = update.message.text
     if not grad_year.isdigit() or len(grad_year) != 4:
         await update.message.reply_text("Invalid year. Please enter a 4-digit number (e.g., 2024).")
         return GET_GRADUATION 
-
     context.user_data['application_data']['graduation_year'] = grad_year
-
     keyboard = [
         [InlineKeyboardButton("English", callback_data='lang_English'),
          InlineKeyboardButton("German", callback_data='lang_German')],
@@ -97,7 +90,6 @@ async def get_graduation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         [InlineKeyboardButton("Italian", callback_data='lang_Italian')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
     await update.message.reply_text(
         "Which **Target Language** are you applying for?",
         reply_markup=reply_markup,
@@ -106,13 +98,10 @@ async def get_graduation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     return GET_LANGUAGE
 
 async def handle_language_selection(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handles the language selection, saves it, and asks for the phone number."""
     query = update.callback_query
     await query.answer()
-    
     selected_language = query.data.split('_')[1]
     context.user_data['application_data']['target_language'] = selected_language
-
     await query.edit_message_text(
         f"You selected: **{selected_language}**.\n\n"
         f"Now, please enter your **WhatsApp Phone Number** for contact (e.g., +2010xxxxxxxx):",
@@ -121,16 +110,13 @@ async def handle_language_selection(update: Update, context: ContextTypes.DEFAUL
     return GET_PHONE
 
 async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Saves the phone number and asks for confirmation."""
     phone_number = update.message.text
     context.user_data['application_data']['phone'] = phone_number
-
     keyboard = [
         [InlineKeyboardButton("✅ Yes, This is Correct", callback_data='phone_correct')],
         [InlineKeyboardButton("❌ Edit Number", callback_data='phone_edit')]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    
     await update.message.reply_text(
         f"You entered: **{phone_number}**.\n\n"
         "Please confirm your number. This is crucial as the HR team will contact you via WhatsApp using this number.",
@@ -140,20 +126,15 @@ async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     return CONFIRM_PHONE
 
 async def handle_phone_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handles the phone number confirmation or prompts for re-entry, and sends the final message."""
     query = update.callback_query
     await query.answer()
-    
     if query.data == 'phone_correct':
-        # 1. Save data to Google Sheet
         data_to_save = context.user_data['application_data']
-        
         if save_to_sheet(data_to_save):
             logging.info(f"Application data saved for {data_to_save.get('name')}")
         else:
             logging.error("Failed to save data to Google Sheet.")
             
-        # 2. Final HR message 
         final_message = (
             "🎉 **Application Received!**\n\n"
             "Your profile has been successfully submitted for review.\n\n"
@@ -161,12 +142,9 @@ async def handle_phone_confirmation(update: Update, context: ContextTypes.DEFAUL
             "(**{phone}**) **within 24 hours** to request a **1-minute self-introduction voice note** for final language assessment.\n\n"
             "This step is vital for your application to proceed. Thank you and good luck! 🚀"
         ).format(phone=data_to_save.get('phone'))
-        
         await query.edit_message_text(final_message, parse_mode='Markdown')
-        
         context.user_data.clear()
         return ConversationHandler.END
-    
     elif query.data == 'phone_edit':
         await query.edit_message_text(
             "Please re-enter your **WhatsApp Phone Number** to ensure it is correct:"
@@ -181,15 +159,17 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
     return ConversationHandler.END
 
+# ----------------------------------------------------------------------
+# التعديل الحاسم لتوافق gunicorn: تغيير اسم الدالة الرئيسية وتعديل التشغيل
+# ----------------------------------------------------------------------
 
-# 13. Main Function to Run the Bot (Webhooks for Render)
-def main() -> None:
-    """Starts the bot using Webhooks, suitable for Render deployment."""
+# الدالة الجديدة التي يتم استدعاؤها في البداية
+def build_application() -> Application:
+    """Creates and configures the Telegram Application object."""
     
-    # Render should be configured with BOT_TOKEN and SHEET_NAME env vars
     if not BOT_TOKEN:
-        logging.error("FATAL: BOT_TOKEN is not set. Please set it in Render Environment Variables.")
-        return 
+        logging.error("FATAL: BOT_TOKEN is not set. Cannot build application.")
+        return None
 
     application = Application.builder().token(BOT_TOKEN).build()
 
@@ -206,24 +186,25 @@ def main() -> None:
     )
 
     application.add_handler(conv_handler)
-    
-    # --- Webhook Deployment Configuration for Render ---
-    
-    # Render provides the PORT dynamically
-    PORT = int(os.environ.get('PORT', '8080'))
-    
-    # NOTE: Render URL must be configured in the Render service settings (it's the service name)
-    # The URL needs to be constructed with the BOT_TOKEN
-    
-    print(f"🤖 Bot is starting up on port {PORT}. Waiting for Render to set the webhook...")
-    
-    # In a typical Render/Heroku setup, we use the token as the path
-    # NOTE: Render automatically handles the webhook registration if configured correctly.
-    application.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        url_path=BOT_TOKEN # This is essential for telegram to send updates to the right URL
-    )
+    return application
+
+# الدالة التي سيتم استهدافها بواسطة gunicorn مباشرة (عادة تكون 'application')
+# هذا هو Object الرئيسي الذي يحتاجه gunicorn
+application = build_application()
+
+# ----------------------------------------------------------------------
+# الدالة التي تشغل الـ Webhook عند التشغيل المباشر أو بواسطة gunicorn 
+# ----------------------------------------------------------------------
 
 if __name__ == '__main__':
-    main()
+    # هذا الجزء يعمل فقط عند التشغيل المحلي (للتجربة)
+    if application:
+        PORT = int(os.environ.get('PORT', '8080'))
+        print(f"🤖 Bot is starting up locally on port {PORT}. (Use python -m http.server to test local webhooks)")
+        
+        # NOTE: For local testing, you would typically run polling here:
+        # application.run_polling() 
+        
+        # For production, we assume gunicorn is running the 'application' object
+
+# نهاية الكود. gunicorn سيستخدم المتغير 'application' مباشرة.
